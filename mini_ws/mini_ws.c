@@ -17,7 +17,6 @@ typedef int socklen_t;
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/select.h>
-#define closesocket close
 #endif
 
 #ifndef MIN
@@ -332,6 +331,22 @@ static int ws_do_server_handshake(int fd, int max_usecs) {
 
 
 // ===================== Server API =====================
+static void ws_socket_close( int* fd ) {
+#ifdef _WIN32
+    closesocket(*fd);
+#else
+    close(*fd);
+#endif
+    *fd = -1;
+}
+
+static void ws_socket_shutdown_wr(int fd) {
+#ifdef _WIN32
+    shutdown((SOCKET)fd, SD_SEND);
+#else
+    shutdown(fd, SHUT_WR);
+#endif
+}
 
 WsServer* ws_server_create(int port) {
     int fd = (int)socket(AF_INET, SOCK_STREAM, 0);
@@ -345,16 +360,16 @@ WsServer* ws_server_create(int port) {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        closesocket(fd);
+        ws_socket_close(&fd);
         return NULL;
     }
     if (listen(fd, 16) < 0) {
-        closesocket(fd);
+        ws_socket_close(&fd);
         return NULL;
     }
 
     WsServer* s = (WsServer*)calloc(1, sizeof(WsServer));
-    if (!s) { closesocket(fd); return NULL; }
+    if (!s) { ws_socket_close(&fd); return NULL; }
     s->fd = fd;
     return s;
 }
@@ -372,12 +387,12 @@ WsConn* ws_server_accept(WsServer* server, int max_usecs) {
     if (cfd < 0) return NULL;
 
     if (!ws_do_server_handshake(cfd, max_usecs)) {
-        closesocket(cfd);
+        ws_socket_close(&cfd);
         return NULL;
     }
 
     WsConn* c = (WsConn*)calloc(1, sizeof(WsConn));
-    if (!c) { closesocket(cfd); return NULL; }
+    if (!c) { ws_socket_close(&cfd); return NULL; }
     c->fd = cfd;
     c->is_client = false;
     c->is_connected = true;
@@ -392,7 +407,7 @@ WsConn* ws_server_accept(WsServer* server, int max_usecs) {
 
 void ws_server_destroy(WsServer* server) {
     if (!server) return;
-    if (server->fd >= 0) closesocket(server->fd);
+    if (server->fd >= 0) ws_socket_close(&server->fd);
     free(server);
 }
 
@@ -498,8 +513,8 @@ void ws_conn_destroy(WsConn* conn) {
             ws_send_close_best_effort(conn, 1000);
             conn->close_sent = true;
         }
-        closesocket(conn->fd);
-        conn->fd = -1;
+        ws_socket_shutdown_wr(conn->fd);
+        ws_socket_close(&conn->fd);
     }
 
     free(conn->read_buffer);
@@ -507,21 +522,24 @@ void ws_conn_destroy(WsConn* conn) {
     conn->read_buffer_size = 0;
     conn->read_buffer_capacity = 0;
     conn->read_offset = 0;
-
     free(conn);
 }
 
 // ===================== Read / Parse =====================
 
 WsIoResult ws_conn_read(WsConn* conn, int max_usecs) {
-    if (!conn || conn->fd < 0) return WS_IO_ERROR;
+    if (!conn || conn->fd < 0) 
+        return WS_IO_ERROR;
 
     maybe_compact(conn);
-    if (!ensure_capacity(conn, 4096)) return WS_IO_ERROR;
+    if (!ensure_capacity(conn, 4096)) 
+        return WS_IO_ERROR;
 
     int rdy = wait_fd(conn->fd, 1, max_usecs);
-    if (rdy == 0) return WS_IO_TIMEOUT;
-    if (rdy < 0) return WS_IO_ERROR;
+    if (rdy == 0) 
+        return WS_IO_TIMEOUT;
+    if (rdy < 0) 
+        return WS_IO_ERROR;
 
     // append after read_buffer_size
     int n = recv(conn->fd,
@@ -529,13 +547,18 @@ WsIoResult ws_conn_read(WsConn* conn, int max_usecs) {
         (int)( conn->read_buffer_capacity - conn->read_buffer_size ),
         0);
     if (n < 0) {
-        if (errno == EINTR) return WS_IO_OK;
+        if (errno == EINTR) 
+            return WS_IO_OK;
         return WS_IO_ERROR;
     }
     if (n == 0) return WS_IO_CLOSED;
 
     conn->read_buffer_size += (size_t)n;
     return WS_IO_OK;
+}
+
+void ws_conn_handle_ping_pong(WsConn* conn, const uint8_t* payload, size_t payload_len) {
+    ws_send_pong_best_effort(conn, payload, payload_len);
 }
 
 WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t* payload_len) {
@@ -605,7 +628,8 @@ WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t*
     // Unmask in-place if needed (payload lives inside read_buffer)
     uint8_t* payload = (uint8_t*)(conn->read_buffer + conn->read_offset + hdr);
     if (masked) {
-        for (size_t i = 0; i < payload_length; i++) payload[i] ^= mask_key[i & 3];
+        for (size_t i = 0; i < payload_length; i++) 
+            payload[i] ^= mask_key[i & 3];
     }
 
     // consume now (advance offset)
@@ -618,6 +642,10 @@ WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t*
     // handle close bookkeeping + ping auto-pong? (we do not auto-pong here; caller can)
     if (opcode == 0x8) conn->close_received = true;
 
+    if (opcode == 0x9) {
+        ws_conn_handle_ping_pong(conn, NULL, 0);
+    }
+
     switch (opcode) {
     case 0x1: return WS_TEXT;
     case 0x2: return WS_BINARY;
@@ -626,10 +654,4 @@ WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t*
     case 0xA: return WS_PONG;
     default:  return WS_ERROR;
     }
-}
-
-// Optional helper if you want automatic ping handling in your app loop:
-// Call this when op==WS_PING.
-void ws_conn_handle_ping_pong(WsConn* conn, const uint8_t* payload, size_t payload_len) {
-    ws_send_pong_best_effort(conn, payload, payload_len);
 }

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
-#include <stddef.h>
+//#include <stddef.h>
 #include <stdint.h>
 
 // This library implements RFC6455 with these constraints:
@@ -42,7 +42,6 @@ extern "C" {
 
 	bool ws_conn_send_binary(WsConn* conn, const uint8_t* data, size_t len);
 	bool ws_conn_send_text(WsConn* conn, const char* data, size_t len);
-	//bool ws_conn_is_closed(WsConn* conn);
 	void ws_conn_destroy(WsConn* conn);		// best-effort CLOSE; does not wait, conn is not usable after this call
 
 	typedef enum { WS_IO_OK, WS_IO_TIMEOUT, WS_IO_CLOSED, WS_IO_ERROR } WsIoResult;

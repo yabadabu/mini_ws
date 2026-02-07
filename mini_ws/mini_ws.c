@@ -292,21 +292,25 @@ static int ws_do_server_handshake(int fd, int max_usecs) {
     char req[8192];
     int used = 0;
 
-    for (;;) {
+    while( true ) {
         if (used >= (int)sizeof(req) - 1) return 0;
 
         int r = wait_fd(fd, 1, max_usecs);
-        if (r == 0) return 0; // timeout treated as failure for accept()
-        if (r < 0) return 0;
+        if (r == 0) 
+            return 0; // timeout treated as failure for accept()
+        if (r < 0) 
+            return 0;
 
-        size_t n = recv(fd, req + used, (size_t)((int)sizeof(req) - 1 - used), 0);
+        int n = recv(fd, req + used, (size_t)((int)sizeof(req) - 1 - used), 0);
         if (n < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) 
+                continue;
             return 0;
         }
-        if (n == 0) return 0;
+        if (n == 0) 
+            return 0;
 
-        used += (int)n;
+        used += n;
         req[used] = '\0';
         if (strstr(req, "\r\n\r\n")) break;
     }
@@ -551,7 +555,8 @@ WsIoResult ws_conn_read(WsConn* conn, int max_usecs) {
             return WS_IO_OK;
         return WS_IO_ERROR;
     }
-    if (n == 0) return WS_IO_CLOSED;
+    if (n == 0) 
+        return WS_IO_CLOSED;
 
     conn->read_buffer_size += (size_t)n;
     return WS_IO_OK;
@@ -569,7 +574,8 @@ WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t*
     size_t avail = (conn->read_buffer_size > conn->read_offset)
         ? (conn->read_buffer_size - conn->read_offset)
         : 0;
-    if (avail < 2) return WS_NO_FRAME;
+    if (avail < 2) 
+        return WS_NO_FRAME;
 
     const uint8_t* p = conn->read_buffer + conn->read_offset;
     uint8_t b0 = p[0];
@@ -610,12 +616,14 @@ WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t*
 
     // control frames constraints
     if (opcode >= 0x8) {
-        if (payload_length > 125) return WS_ERROR;
+        if (payload_length > 125) 
+            return WS_ERROR;
     }
 
     uint8_t mask_key[4] = { 0 };
     if (masked) {
-        if (avail < hdr + 4) return WS_NO_FRAME;
+        if (avail < hdr + 4) 
+            return WS_NO_FRAME;
         mask_key[0] = p[hdr + 0];
         mask_key[1] = p[hdr + 1];
         mask_key[2] = p[hdr + 2];

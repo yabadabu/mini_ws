@@ -17,19 +17,19 @@ int main()
 	WsServer* ws_server = ws_server_create(7450);
 	if (!ws_server)
 		return -1;
+	printf("ws server started\n");
 
 	while (true) {
-		printf("ws server ready\n");
+		printf(".");
+		fflush(stdout);
 		WsConn* conn = ws_server_accept(ws_server, 1000000);
 		if (conn) {
 			printf("ws connection accepted: fd=%d\n", conn->fd);
 
 			while( true ) {
 				WsIoResult r = ws_conn_read(conn, 1000000);
-				if (r == WS_IO_ERROR || r == WS_IO_CLOSED) {
-					printf("ws connection closed by client: fd=%d\n", conn->fd);
+				if (r == WS_IO_ERROR || r == WS_IO_CLOSED)
 					break;
-				}
 				else if (r == WS_IO_TIMEOUT)
 					continue;
 				
@@ -59,7 +59,6 @@ int main()
 					}
 				}
 			}
-			//ws_conn_destroy(conn);
 		}
 	}
 

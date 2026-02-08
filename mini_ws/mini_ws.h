@@ -40,25 +40,24 @@ extern "C" {
 	WsConn* ws_server_accept(WsServer* server, int max_usecs);	// returns NULL on timeout or error
 	void ws_server_destroy(WsServer* server);
 
-	bool ws_conn_send_binary(WsConn* conn, const uint8_t* data, size_t len);
+	bool ws_conn_send_binary(WsConn* conn, const void* data, size_t len);
 	bool ws_conn_send_text(WsConn* conn, const char* data, size_t len);
 	void ws_conn_destroy(WsConn* conn);		// best-effort CLOSE; does not wait, conn is not usable after this call
 
-	typedef enum { WS_IO_OK, WS_IO_TIMEOUT, WS_IO_CLOSED, WS_IO_ERROR } WsIoResult;
-	WsIoResult ws_conn_read(WsConn* conn, int max_usecs);
-
 	typedef enum {
-		WS_NO_FRAME = 0,
-		WS_TEXT = 1,
-		WS_BINARY = 2,
-		WS_CLOSE = 8,
-		WS_PING = 9,
-		WS_PONG = 10,
-		WS_ERROR = -1
-	} WsOpcode;
-	// payload_data and payload_len are only valid if the return value is WS_TEXT or WS_BINARY, and only valid
-	// until the next call to ws_conn_read() or ws_conn_parse_frame() on the same connection.
-	WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t* payload_len);
+		WS_EVT_NONE = 0,   // no complete frame available yet
+		WS_EVT_TEXT,       // payload will NOT be null-terminated; payload_len is the length in bytes; payload is not guaranteed to be valid UTF-8
+		WS_EVT_BINARY,
+		WS_EVT_CLOSED,     // connection closed (ws close or io dead)
+	} WsEventType;
+
+	typedef struct {
+		WsEventType type;
+		const uint8_t* payload;
+		size_t payload_len;
+	} WsEvent;
+
+	bool ws_conn_poll_event(WsConn** conn, WsEvent* out_event, int max_usecs);
 
 #ifdef __cplusplus
 }

@@ -38,6 +38,18 @@ The WsConn represents a single connection. You can check for messages, write bin
 
 ```
 
+In windows, remember to init the winsock library before using the ws_server_create function:
+
+```c
+
+#include <winsock2.h>
+
+#ifdef _WIN32
+	WSADATA wsa_data;
+	WSAStartup(MAKEWORD(2, 2), &wsa_data);
+#endif
+```
+
 # Compile in Linux
 
 	cc demo.cpp ../mini_ws/mini_ws.c -I.. -lstdc++ -o server

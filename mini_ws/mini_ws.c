@@ -24,6 +24,10 @@ typedef int socklen_t;
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #endif
 
+#ifndef WS_MAX_SEND_FRAME
+#define WS_MAX_SEND_FRAME (64u * 1024u * 1024u) // 64MB
+#endif
+
 // ===================== SHA1 (small) =====================
 
 typedef struct {
@@ -419,28 +423,32 @@ void ws_server_destroy(WsServer* server) {
 
 // ===================== Frame build/send =====================
 
-static size_t ws_build_header(uint8_t* dst, size_t cap, uint8_t opcode, size_t len, int mask, uint8_t mask_key[4]) {
+static size_t ws_build_header(uint8_t* dst, size_t cap, uint8_t opcode, uint64_t len,
+    int mask, uint8_t mask_key[4]) {
     if (cap < 2) return 0;
     size_t h = 0;
+
     dst[h++] = (uint8_t)(0x80 | (opcode & 0x0F)); // FIN=1
 
     if (len <= 125) {
         dst[h++] = (uint8_t)((mask ? 0x80 : 0x00) | (uint8_t)len);
     }
     else if (len <= 65535) {
-        if (cap < 4) return 0;
+        if (cap < h + 2 + 1) return 0;
         dst[h++] = (uint8_t)((mask ? 0x80 : 0x00) | 126);
         dst[h++] = (uint8_t)((len >> 8) & 0xFF);
         dst[h++] = (uint8_t)((len >> 0) & 0xFF);
     }
     else {
-        return 0; // basic mode: reject larger
+        if (cap < h + 8 + 1) return 0;
+        dst[h++] = (uint8_t)((mask ? 0x80 : 0x00) | 127);
+        // 64-bit big-endian length
+        for (int i = 7; i >= 0; i--) dst[h++] = (uint8_t)((len >> (i * 8)) & 0xFF);
     }
 
     if (mask) {
         if (cap < h + 4) return 0;
-        // weak RNG: replace with your own if you need
-        uint32_t r = (uint32_t)rand();
+        uint32_t r = (uint32_t)rand(); // replace if you care
         mask_key[0] = (uint8_t)((r >> 0) & 0xFF);
         mask_key[1] = (uint8_t)((r >> 8) & 0xFF);
         mask_key[2] = (uint8_t)((r >> 16) & 0xFF);
@@ -450,16 +458,17 @@ static size_t ws_build_header(uint8_t* dst, size_t cap, uint8_t opcode, size_t l
         dst[h++] = mask_key[2];
         dst[h++] = mask_key[3];
     }
+
     return h;
 }
 
-static int ws_send_frame(WsConn* c, uint8_t opcode, const uint8_t* payload, size_t len) {
+static int ws_send_frame(WsConn* c, uint8_t opcode, const void* payload, size_t len) {
     if (!c || c->fd < 0) return 0;
     if (!c->is_connected) return 0;
-    if (len > 65535) return 0;
+    if (len > WS_MAX_SEND_FRAME) return 0;
 
     int mask = c->is_client ? 1 : 0;
-    uint8_t header[2 + 2 + 4]; // enough for <=65535 plus mask
+    uint8_t header[14];
     uint8_t mask_key[4] = { 0 };
 
     size_t hlen = ws_build_header(header, sizeof(header), opcode, len, mask, mask_key);
@@ -479,7 +488,7 @@ static int ws_send_frame(WsConn* c, uint8_t opcode, const uint8_t* payload, size
         size_t off = 0;
         while (off < len) {
             size_t n = MIN(sizeof(tmp), len - off);
-            memcpy(tmp, payload + off, n);
+            memcpy(tmp, (uint8_t*)payload + off, n);
             for (size_t i = 0; i < n; i++) tmp[i] ^= mask_key[(off + i) & 3];
             if (send_all(c->fd, tmp, n, 1000000) < 0) return 0;
             off += n;
@@ -488,13 +497,13 @@ static int ws_send_frame(WsConn* c, uint8_t opcode, const uint8_t* payload, size
     }
 }
 
-bool ws_conn_send_binary(WsConn* conn, const uint8_t* data, size_t len) {
+bool ws_conn_send_binary(WsConn* conn, const void* data, size_t len) {
     return ws_send_frame(conn, 0x2, data, len) != 0;
 }
 
 bool ws_conn_send_text(WsConn* conn, const char* data, size_t len) {
     if( len == 0 )
-        len = strlen(data);
+		len = strlen(data);
     return ws_send_frame(conn, 0x1, (const uint8_t*)data, len) != 0;
 }
 
@@ -533,20 +542,22 @@ void ws_conn_destroy(WsConn* conn) {
 }
 
 // ===================== Read / Parse =====================
-
-WsIoResult ws_conn_read(WsConn* conn, int max_usecs) {
+// -1 -> error
+//  0 -> no new data
+//  1 -> new data recv
+static int ws_conn_read(WsConn* conn, int max_usecs) {
     if (!conn || conn->fd < 0) 
-        return WS_IO_ERROR;
+        return -1;
 
     maybe_compact(conn);
     if (!ensure_capacity(conn, 4096)) 
-        return WS_IO_ERROR;
+        return -1;
 
     int rdy = wait_fd(conn->fd, 1, max_usecs);
     if (rdy == 0) 
-        return WS_IO_TIMEOUT;
+        return 0;
     if (rdy < 0) 
-        return WS_IO_ERROR;
+        return -1;
 
     // append after read_buffer_size
     int n = recv(conn->fd,
@@ -555,19 +566,29 @@ WsIoResult ws_conn_read(WsConn* conn, int max_usecs) {
         0);
     if (n < 0) {
         if (errno == EINTR) 
-            return WS_IO_OK;
-        return WS_IO_ERROR;
+            return 1;
+        return -1;
     }
     if (n == 0) 
-        return WS_IO_CLOSED;
+        return -1;
 
     conn->read_buffer_size += (size_t)n;
-    return WS_IO_OK;
+    return 1;
 }
 
 void ws_conn_handle_ping_pong(WsConn* conn, const uint8_t* payload, size_t payload_len) {
     ws_send_pong_best_effort(conn, payload, payload_len);
 }
+
+typedef enum {
+	WS_NO_FRAME = 0,
+	WS_TEXT = 1,
+	WS_BINARY = 2,
+	WS_CLOSE = 8,
+	WS_PING = 9,
+	WS_PONG = 10,
+	WS_ERROR = -1
+} WsOpcode;
 
 WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t* payload_len) {
     if (payload_data) *payload_data = NULL;
@@ -653,10 +674,6 @@ WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t*
     // handle close bookkeeping + ping auto-pong? (we do not auto-pong here; caller can)
     if (opcode == 0x8) conn->close_received = true;
 
-    if (opcode == 0x9) {
-        ws_conn_handle_ping_pong(conn, NULL, 0);
-    }
-
     switch (opcode) {
     case 0x1: return WS_TEXT;
     case 0x2: return WS_BINARY;
@@ -665,4 +682,52 @@ WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t*
     case 0xA: return WS_PONG;
     default:  return WS_ERROR;
     }
+}
+
+bool ws_conn_poll_event(WsConn** conn_ptr, WsEvent* out_evt, int max_usecs) {
+    if (!conn_ptr || !*conn_ptr || !out_evt)
+        return false;
+    WsConn* conn = *conn_ptr;
+
+    int rc = ws_conn_read(conn, max_usecs);
+    if (rc < 0) {
+        ws_conn_destroy(conn);
+        *conn_ptr = NULL;
+        out_evt->type = WS_EVT_CLOSED;
+        out_evt->payload = NULL;
+        out_evt->payload_len = 0;
+        return true;
+    }
+
+    if (rc == 0) {
+        out_evt->type = WS_EVT_NONE;
+        out_evt->payload = NULL;
+        out_evt->payload_len = 0;
+        return false;
+    }
+
+    WsOpcode code = ws_conn_parse_frame(conn, &out_evt->payload, &out_evt->payload_len);
+    if (code == WS_TEXT) {
+        out_evt->type = WS_EVT_TEXT;
+        return true;
+    }
+    if (code == WS_BINARY) {
+        out_evt->type = WS_EVT_BINARY;
+        return true;
+    }
+    if (code == WS_PING) {
+        // No need to bother the client
+        ws_conn_handle_ping_pong(conn, NULL, 0);
+        return false;
+    }
+    if (code == WS_CLOSE || code == WS_ERROR) {
+        ws_conn_destroy(conn);
+        *conn_ptr = NULL;
+        out_evt->type = WS_EVT_CLOSED;
+        out_evt->payload = NULL;
+        out_evt->payload_len = 0;
+        return true;
+    }
+
+    return true;
 }

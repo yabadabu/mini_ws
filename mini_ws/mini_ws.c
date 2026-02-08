@@ -493,6 +493,8 @@ bool ws_conn_send_binary(WsConn* conn, const uint8_t* data, size_t len) {
 }
 
 bool ws_conn_send_text(WsConn* conn, const char* data, size_t len) {
+    if( len == 0 )
+        len = strlen(data);
     return ws_send_frame(conn, 0x1, (const uint8_t*)data, len) != 0;
 }
 

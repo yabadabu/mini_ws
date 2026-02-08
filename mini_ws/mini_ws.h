@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
-//#include <stddef.h>
+#include <stddef.h>
 #include <stdint.h>
 
 // This library implements RFC6455 with these constraints:

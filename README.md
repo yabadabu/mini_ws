@@ -31,10 +31,19 @@ The WsServer object is used to accept new connections. The server does not keep 
 	ws_server_destroy(ws_server);
 ```
 
-The WsConn represents a single connection. You can check for messages, write binary/text messages or close the connection.
+The WsConn represents a single connection. You can poll for messages, write binary/text messages or close the connection.
 
 ```c
 
+	WsEvent evt;
+	if (!ws_conn_poll_event(&app->conn, &evt, 0))
+		return;
+	if (evt.type == WS_EVT_CLOSED)
+		return;
+	else if (evt.type == WS_EVT_TEXT)
+		printf("Ws.Text: %.*s\n", (int)evt.payload_len, evt.payload);
+	else if (evt.type == WS_EVT_BINARY)
+		printf("Ws.Bin %d bytes\n", (int)evt.payload_len);
 
 ```
 
@@ -50,7 +59,7 @@ In windows, remember to init the winsock library before using the ws_server_crea
 #endif
 ```
 
-# Compile in Linux
+# Compile in Linux/osx
 
 	cc demo.cpp ../mini_ws/mini_ws.c -I.. -lstdc++ -o server
 

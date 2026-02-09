@@ -36,14 +36,19 @@ The WsConn represents a single connection. You can poll for messages, write bina
 ```c
 
 	WsEvent evt;
-	if (!ws_conn_poll_event(&app->conn, &evt, 0))
+	if (!ws_conn_poll_event(&conn, &evt, 0))
 		return;
-	if (evt.type == WS_EVT_CLOSED)
-		return;
-	else if (evt.type == WS_EVT_TEXT)
+	if (evt.type == WS_EVT_CLOSED) {
+		// app->conn has already been cleared and conn = NULL now
+		// ..
+	} 
+	else if (evt.type == WS_EVT_TEXT) {
+		// payload is NOT null-terminated
 		printf("Ws.Text: %.*s\n", (int)evt.payload_len, evt.payload);
-	else if (evt.type == WS_EVT_BINARY)
+	}
+	else if (evt.type == WS_EVT_BINARY) {
 		printf("Ws.Bin %d bytes\n", (int)evt.payload_len);
+	}
 
 ```
 

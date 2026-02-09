@@ -4,11 +4,16 @@ This is a minimal websocket in c, with no dependencies, ideal for small projects
 
 # Features
 
-* Super simple API
+* Super simple API in C
 * Poll specifying the maximum timeout in micro secs. Use 0 is perform a single test for incomming messages.
 * Supports text and binary frames
 * Read buffer is owned by the WsConn.
 * Tested on windows/linux/osx
+
+# What it's not
+
+* A library to manage hunders of simultaneous ws connections
+* An http server
 
 # Install
 
@@ -19,15 +24,19 @@ Copy and compile the mini_ws folder into your project.
 The WsServer object is used to accept new connections. The server does not keep track of the active connections.
 
 ```c
+
+#include "mini_ws/mini_ws.h"
+..
+
 	WsServer* ws_server = ws_server_create(7450);
 	if (!ws_server)		// Can't start the ws server
 		return;
 	
-	// ...
+	// Check for new connections
 	if( WsConn* conn = ws_server_accept(ws_server, 1000000) ) 
 		add_new_connection( conn );
 
-	// ...
+	// When we are done with the server
 	ws_server_destroy(ws_server);
 ```
 
@@ -52,7 +61,7 @@ The WsConn represents a single connection. You can poll for messages, write bina
 
 ```
 
-In windows, remember to init the winsock library before using the ws_server_create function:
+In Windows, remember to init the winsock library before using the ws_server_create function:
 
 ```c
 
@@ -64,7 +73,7 @@ In windows, remember to init the winsock library before using the ws_server_crea
 #endif
 ```
 
-# Compile in Linux/osx
+# Compile in Linux/OSX
 
 	cc demo.cpp ../mini_ws/mini_ws.c -I.. -lstdc++ -o server
 

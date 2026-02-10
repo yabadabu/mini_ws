@@ -30,6 +30,7 @@ extern "C" {
 		// ... you can add more fields here if needed for your implementation
 		bool close_sent;
 		bool close_received;
+		bool skip_timeout_reading_network;
 	} WsConn;
 
 	typedef struct WsServer {
@@ -48,6 +49,7 @@ extern "C" {
 		WS_EVT_NONE = 0,   // no complete frame available yet
 		WS_EVT_TEXT,       // payload will NOT be null-terminated; payload_len is the length in bytes; payload is not guaranteed to be valid UTF-8
 		WS_EVT_BINARY,
+		WS_EVT_PING,
 		WS_EVT_CLOSED,     // connection closed (ws close or io dead)
 	} WsEventType;
 

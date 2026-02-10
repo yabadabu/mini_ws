@@ -411,6 +411,7 @@ WsConn* ws_server_accept(WsServer* server, int max_usecs) {
     c->read_offset = 0;
     c->close_sent = false;
     c->close_received = false;
+    c->skip_timeout_reading_network = false;
     return c;
 }
 
@@ -687,47 +688,50 @@ WsOpcode ws_conn_parse_frame(WsConn* conn, const uint8_t** payload_data, size_t*
 bool ws_conn_poll_event(WsConn** conn_ptr, WsEvent* out_evt, int max_usecs) {
     if (!conn_ptr || !*conn_ptr || !out_evt)
         return false;
+
+    out_evt->payload = NULL;
+    out_evt->payload_len = 0;
+
     WsConn* conn = *conn_ptr;
 
+    if (conn->skip_timeout_reading_network)
+        max_usecs = 0;
+    
     int rc = ws_conn_read(conn, max_usecs);
     if (rc < 0) {
         ws_conn_destroy(conn);
         *conn_ptr = NULL;
         out_evt->type = WS_EVT_CLOSED;
-        out_evt->payload = NULL;
-        out_evt->payload_len = 0;
         return true;
-    }
-
-    if (rc == 0) {
-        out_evt->type = WS_EVT_NONE;
-        out_evt->payload = NULL;
-        out_evt->payload_len = 0;
-        return false;
     }
 
     WsOpcode code = ws_conn_parse_frame(conn, &out_evt->payload, &out_evt->payload_len);
     if (code == WS_TEXT) {
         out_evt->type = WS_EVT_TEXT;
+        conn->skip_timeout_reading_network = true;
         return true;
     }
     if (code == WS_BINARY) {
         out_evt->type = WS_EVT_BINARY;
+        conn->skip_timeout_reading_network = true;
         return true;
     }
     if (code == WS_PING) {
-        // No need to bother the client
+        // No need to bother the client managing the answer
         ws_conn_handle_ping_pong(conn, NULL, 0);
-        return false;
+        out_evt->type = WS_EVT_PING;
+        conn->skip_timeout_reading_network = true;
+        return true;
     }
     if (code == WS_CLOSE || code == WS_ERROR) {
         ws_conn_destroy(conn);
         *conn_ptr = NULL;
         out_evt->type = WS_EVT_CLOSED;
-        out_evt->payload = NULL;
-        out_evt->payload_len = 0;
+        conn->skip_timeout_reading_network = false;
         return true;
     }
 
-    return true;
+    out_evt->type = WS_EVT_NONE;
+    conn->skip_timeout_reading_network = false;
+    return false;
 }

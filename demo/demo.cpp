@@ -41,7 +41,8 @@ int main()
 {
 #ifdef _WIN32
 	WSADATA wsa_data;
-	WSAStartup(MAKEWORD(2, 2), &wsa_data);
+	if (!WSAStartup(MAKEWORD(2, 2), &wsa_data))
+		return -1;
 #endif
 
 	pngs[0].readFromFile("img00.png");
